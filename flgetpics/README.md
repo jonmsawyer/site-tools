@@ -41,6 +41,24 @@ or do `$ python getpics.py`. Note: this script is designed to be executed
 in the directory where `getpics.py` is located. A folder called "pics"
 will be made followed by the rest of the pictures scraped from the site.
 
+Usage: `./getpics.py [user_id [user_id ...]]`
+
+user_id - the user id of the profile to scrape
+
+Withough arguments: `./getpics.py` will finish downloading pictures from any
+interrupted users. If there are no users in the `TODO_LIST`, then `./getpics.py`
+will check and download any *new* pictures from ALL profiles in `USER_LIST`.
+
+Examples:
+
+`$ ./getpics.py`
+> Finish everything in `TODO_LIST`. If `TODO_LIST` is empty, fetch everything
+> in `USER_LIST`
+
+`$ ./getpics.py 1234 5678 9012`
+> Fetch all pictures in these users profiles. If process is interuppted, you may
+> finish again by simply executing `./getpics.py`
+
 Contributing
 ------------
 
