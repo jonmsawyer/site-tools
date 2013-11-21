@@ -159,7 +159,7 @@ def parse_picture_page(data):
     return user_name, num_pages, num_pics
 
 #
-# Parse this singluar picture page data for the final picture URL
+# Parse this singular picture page data for the final picture URL
 #
 def parse_picture_page_for_final_url(data):
     match = re.search(r"<style>.*@media.*@media.*@media.*\.fake_img.*background-image: url\('(.+)'\); \}  \}.*</style>", data, re.M|re.S)
