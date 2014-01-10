@@ -19,7 +19,7 @@ Platform
 
 This app will run on Linux, Mac, and Windows. Unfortunately, Windows
 doesn't have `symlinks` so Windows can't utilize the full intended
-power of `flgetpics`. But, never fret.
+power of `tumblrgetpics`. But, never fret.
 
 Running the app
 ---------------
