@@ -16,7 +16,7 @@ import tempfile
 import shutil
 
 pics_dir = 'pics'
-users_dir = 'users'
+blogs_dir = 'blogs'
 top_uri = '/page/1'
 top_referer = ''
 last_referer = ''
@@ -29,7 +29,7 @@ headers = {
 	'Referer': '',
 	'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/30.0.1599.101 Safari/537.36',
 }
-
+previous_page_pics = []
 todo_ids = set()
 def signal_handler(sig, frame):
     global todo_ids
@@ -104,9 +104,16 @@ def get(connection, uri):
     headers['Referer'] = last_referer
     headers['Host'] = connection.host
     last_referer = uri
-    connection.request('GET', uri, '', headers)
+    try:
+        connection.request('GET', uri, '', headers)
+    except:
+        time.sleep(10)
+        try:
+            connection.request('GET', uri, '', headers)
+        except:
+            return None, None, None
     response = connection.getresponse()
-    print 'get:', response.status, response.reason, uri
+    print 'get:', response.status, response.reason, connection.host.split('.')[0], uri
     return response.status, response.reason, response.read()
 
 #
@@ -179,7 +186,12 @@ def parse_tumblr_page(data, user, sub_page=False, deep_page=False):
 
 def get_remote_file(url, to_dir):
     file_name = url.split('/')[-1]
-    u = urllib2.urlopen(url)
+    try:
+    	u = urllib2.urlopen(url)
+    except Exception, e:
+        print "ERROR: Downloading failed for %s. Reason: %s" % (file_name, str(e))
+        return
+    
     f = open(tempfile.mktemp(), 'wb')
     meta = u.info()
     file_size = int(meta.getheaders("Content-Length")[0])
@@ -210,9 +222,13 @@ def get_remote_file(url, to_dir):
 # Catch sigint
 signal.signal(signal.SIGINT, signal_handler)
 
-# Set up the path where the pictures are going to live
-if not os.path.exists(os.path.join(pics_dir, users_dir)):
-    os.makedirs(os.path.join(pics_dir, users_dir))
+# Set up the path where the blogs are going to live
+if not os.path.exists(blogs_dir):
+    os.makedirs(blogs_dir)
+
+# Set up the path where the blogs are going to live
+if not os.path.exists(pics_dir):
+    os.makedirs(pics_dir)
 
 touch('TODO_LIST')
 with open('TODO_LIST') as fh:
@@ -275,7 +291,10 @@ for user in user_ids:
             with open('USER_LIST_FAILED', 'a') as fh:
                 fh.write(user+"\r\n")
             bad_user_ids.add(user)
-        todo_ids.remove(user)
+        try:
+            todo_ids.remove(user)
+        except:
+            pass
 
     c.close()
 
@@ -284,12 +303,14 @@ if len(todo_ids) > 0:
 
 for user in user_ids:
     c = httplib.HTTPConnection("%s.tumblr.com" % (user,))
-    user_pic_path = os.path.join(pics_dir, users_dir, user)
+    user_pic_path = os.path.join(blogs_dir, user)
+    all_pics_path = pics_dir
     
-    # Create the directory structure for the user: pics/users/{{user_id}} 
+    # Create the directory structure for the user: blogs/{{user_id}} 
     if not os.path.exists(user_pic_path):
         os.makedirs(user_pic_path)
-        
+
+    errors_in_row = 0
     current_page = 1
     while current_page > 0:
         # Try to get a user's page
@@ -298,21 +319,44 @@ for user in user_ids:
         else:
             status, reason, data = get(c, '/page/%s' % (current_page,))
 
+        if status == None and reason == None and data == None:
+            if errors_in_row >= 1:
+                break
+            else:
+                errors_in_row += 1
+            current_page += 1
+            continue
+
         if status != 200:
             break
-        
+        else:
+            errors_in_row = 0
+
         pages, all_pics = parse_tumblr_page(data, user)
         if pages == [] and all_pics == []:
            current_page = -1 # we're done
            continue
 
+        every_page = list(pages)
+
+        pic_pages_file = os.path.join(user_pic_path, '.pic_pages.txt')
+        touch(pic_pages_file)
+        with open(pic_pages_file) as fh:
+            pic_pages_buf = fh.read().split()
+        
         # Parse sub pages (level 2)
         for page in pages:
-            page_status, page_reason, page_data = get(c, page.replace('http://%s.tumblr.com' % (user,), ''))
+            pic_url = '/'+'/'.join(page.split('/')[3:])
+            if pic_url in pic_pages_buf:
+                print "("+user+") Not checking", pic_url, "..."
+                continue
+            else:
+                page_status, page_reason, page_data = get(c, page.replace('http://%s.tumblr.com' % (user,), ''))
             if page_status != 200:
                continue
             page_pages, page_all_pics = parse_tumblr_page(page_data, user, sub_page=True)
             all_pics.extend(page_all_pics)
+            every_page.extend(page_pages)
 
             # Parse sub pages of sub pages (level 3) [this is far as we'll go]
             for deep_page in page_pages:
@@ -321,9 +365,16 @@ for user in user_ids:
                     continue
                 deep_pages, deep_all_pics = parse_tumblr_page(deep_data, user, sub_page=True, deep_page=True)
                 all_pics.extend(deep_all_pics)
+                every_page.extend(deep_pages)
                 if deep_pages != []:
                     print 'WARNING: expected empty page set, instead got %s pages!' % (len(deep_pages),)
 
+        #for page in every_page:
+        #    print '/'+'/'.join(page.split('/')[3:])
+        for pic in all_pics:
+            print pic
+        #exit()
+        
         # Grab the largest pic in the set
         old_all_pics = list(set(all_pics))
         old_all_pics.sort(key=lambda s: s.split('_',1)[1])
@@ -338,7 +389,10 @@ for user in user_ids:
             if key != p[1]:
                 all_pics.append(pic)
                 key = p[1]
-                size = int(p[2].split('.')[0])
+                try:
+                    size = int(p[2].split('.')[0])
+                except ValueError as e:
+                    continue
             else:
                 p_size = int(p[2].split('.')[0])
                 if size >= p_size:
@@ -350,13 +404,19 @@ for user in user_ids:
                             all_pics.remove(i)
                             all_pics.append(pic)
                             break
-
         print '(%s)' % (user,), 'Getting', len(all_pics), 'pics for page', current_page
-        current_page = current_page + 1
+        #if all_pics == previous_page_pics:
+        if every_page == previous_page_pics:
+            current_page = -1
+            continue
+        else:
+            #previous_page_pics = list(all_pics)
+            previous_page_pics = list(every_page)
+            current_page = current_page + 1
         
-        #mklink(os.path.join(users_dir, user), os.path.join(pics_dir, user_name))
+        #mklink(os.path.join(blogs_dir, user), os.path.join(pics_dir, user_name))
 
-        #profile_name_file = os.path.join(pics_dir, users_dir, user, '.profile_username.txt')
+        #profile_name_file = os.path.join(pics_dir, blogs_dir, user, '.profile_username.txt')
         #with open(profile_name_file, 'w') as fh:
         #    fh.write(user_name+"\r\n")
 
@@ -379,9 +439,10 @@ for user in user_ids:
             for url in all_pics:
                 if not url.split('/', 3)[3] in pic_pages:
                     print "     (%s) Getting %s ..." % (user, url)
-                    if not os.path.exists(os.path.join(user_pic_path, url.split('/')[-1])):
+                    picname = url.split('/')[-1]
+                    if not os.path.exists(os.path.join(all_pics_path, picname)):
                         try:
-                            get_remote_file(url, user_pic_path)
+                            get_remote_file(url, all_pics_path)
                             #subprocess.check_output("wget %s -N -P %s/" % (url, user_pic_path), shell=True)
                         except:
                             raise
@@ -391,14 +452,25 @@ for user in user_ids:
                             #    #subprocess.check_output("wget %s -N -P %s/" % (url, user_pic_path), shell=True)
                             #except:
                             #    raise
+                    if not os.path.exists(os.path.join(user_pic_path, picname)):
+                        mklink(
+                            os.path.join('..', '..', all_pics_path, picname),
+                            os.path.join(user_pic_path, picname)
+                        )
+                        
                     #with open(os.path.join(user_pic_path, url.split('/')[-1]+'.txt'), 'w') as meta_h:
                     #    meta_h.write(json.dumps(pic_ob, sort_keys=True, indent=2))
                     fh.write(url.split('/', 3)[3]+"\r\n")
-        try:
-            todo_ids.remove(user)
-        except KeyError:
-            pass
-        #exit(0)
+        with open(pic_pages_file, 'a') as fh:
+            for page in every_page:
+                fh.write('/'+'/'.join(page.split('/')[3:])+"\r\n")
+    try:
+        todo_ids.remove(user)
+        with open('TODO_LIST', 'w') as fh:
+            fh.write("\r\n".join(todo_ids)+"\r\n")
+    except KeyError:
+        pass
+    #exit(0)
 
 # Remove any failed users out of the USER_LIST
 # (as they are already in the bad list)
